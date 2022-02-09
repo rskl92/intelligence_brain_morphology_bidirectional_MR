@@ -1,0 +1,248 @@
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(TwoSampleMR)
+library(psych)
+
+
+#Set directory to obtain phenotypic data
+setwd("~/Data/UKBIOBANK/Phenotypic_data/")
+cortical_structures_thickness <- fread("cortical_thickness_ukbiobank192.txt")
+
+## return indices of repeat visits
+ind <- cortical_structures_thickness[,grep(".3.0",colnames(cortical_structures_thickness))]
+
+##Remove repeat image data
+cortical_structures_thickness <- cortical_structures_thickness[,-c(3,4,6,18:47,49,51,53,55,57,59,61,63,65,67,69,71,73,75,77,79,81,83,85,87,89,91,93,95,97,99,101,103,105,107,109,111,113,115,117,119,121,123,125,127,129,131,133,135,137,139,141,143,145,147,149,151,153,155,157,159,161,163,165,167,169,171,173,175,177,179,181,183,185,186,187),]
+
+colnames(cortical_structures_thickness)[3:83] <- c("age_imaging","sex","PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","l_mean_thickness","r_mean_thickness","l_banksst_thickness","r_banksst_thickness","l_caudalanteriorcingulate_thickness","r_caudalanteriorcingulate_thickness","l_caudalmiddlefrontal_thickness","r_caudalmiddlefrontal_thickness","l_cuneus_thickness","r_cuneus_thickness","l_entorhinal_thickness","r_entorhinal_thickness","l_frontalpole_thickness","r_frontalpole_thickness","l_fusiform_thickness","r_fusiform_thickness","l_inferiorparietal_thickness","r_inferiorparietal_thickness","l_inferiortemporal_thickness","r_inferiortemporal_thickness","l_insula_thickness","r_insula_thickness","l_isthmuscingulate_thickness","r_isthmuscingulate_thickness","l_lateraloccipital_thickness","r_lateraloccipital_thickness","l_lateralorbitofrontal_thickness","r_lateralorbitofrontal_thickness","l_lingual_thickness","r_lingual_thickness","l_medialorbitofrontal_thickness","r_medialorbitofrontal_thickness","l_middletemporal_thickness","r_middletemporal_thickness","l_paracentral_thickness","r_paracentral_thickness","l_parahippocampal_thickness","r_parahippocampal_thickness","l_parsopercularis_thickness","r_parsopercularis_thickness","l_parsorbitalis_thickness","r_parsorbitalis_thickness","l_parstriangularis_thickness","r_parstriangularis_thickness","l_pericalcarine_thickness","r_pericalcarine_thickness","l_postcentral_thickness","r_postcentral_thickness","l_posteriorcingulate_thickness","r_posteriorcingulate_thickness","l_precentral_thickness","r_precentral_thickness","l_precuneus_thickness","r_precuneus_thickness","l_rostralanteriorcingulate_thickness","r_rostralanteriorcingulate_thickness","l_rostralmiddlefrontal_thickness","r_rostralmiddlefrontal_thickness","l_superiorfrontal_thickness","r_superiorfrontal_thickness","l_superiorparietal_thickness","r_superiorparietal_thickness","l_superiortemporal_thickness","r_superiortemporal_thickness","l_supramarginal_thickness","r_supramarginal_thickness","l_transversetemporal_thickness","r_transversetemporal_thickness","age_rec")
+
+
+
+intelligence_SNPS_UKB <- fread("~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/UK_Biobank/GeneticData/ukbb_intelligence_snps_proxies_hill.raw")
+colnames(intelligence_SNPS_UKB)[2] <- "appieu"
+linker_file <- fread("~/48970/dev/release_candidate/data/linker_file.csv")
+intelligence_SNPS_UKB_phenid <-  merge(linker_file,intelligence_SNPS_UKB,by="appieu")
+colnames(intelligence_SNPS_UKB_phenid)[2] <- "eid"
+cortical_thickness_gen <- merge(intelligence_SNPS_UKB_phenid,cortical_structures_thickness,by.x="eid",by.y="projectID")
+names(cortical_thickness_gen) <- gsub("\\(..)", "",names(cortical_thickness_gen))
+
+
+##Remove outliers if they lie below or above 3*IQR
+##WRITE FUNCTION
+is_outlier <- function(x, iqrfac = 3) {
+  quants <- quantile(x, na.rm = TRUE)
+  iqr <- quants[4] - quants[2]
+  !is.na(x) & (x < (quants[2] - iqrfac*iqr) | (quants[4] + iqrfac*iqr) < x)
+}
+
+#Replace outliers as NA
+cortical_thickness_gen[,c(174:241)] <- Map(replace, cortical_thickness_gen[,c(174:241)], lapply(cortical_thickness_gen[,c(174:241)], is_outlier), NA)
+cortical_thickness_complete<- cortical_thickness_gen[apply(!is.na(cortical_thickness_gen[,174:241]),1,any),]
+
+#Order dataset by age and separate into three equal tertiles
+cortical_thickness_complete <- cortical_thickness_complete[order(cortical_thickness_complete$age_imaging),]
+cortical_thickness_completeT1 <-cortical_thickness_complete[1:9377,]
+cortical_thickness_completeT2 <- cortical_thickness_complete[9378:18753,]
+cortical_thickness_completeT3 <- cortical_thickness_complete[18754:28129,]
+
+cortical_thickness_subset_whole <- cortical_thickness_complete[,c(174:241)]
+cortical_thickness_subset1 <- cortical_thickness_completeT1[,c(174:241)]
+cortical_thickness_subset2 <- cortical_thickness_completeT2[,c(174:241)]
+cortical_thickness_subset3 <- cortical_thickness_completeT3[,c(174:241)]
+
+
+
+##calculate mean for cortical thickness structures [age tertile 1]
+out_cort_thickness1<-t(cortical_thickness_subset1) %>%
+data.frame() %>%
+group_by(., id = gsub('^[rl]_', '', rownames(.))) %>% ##replace beginning that starts with r or l with nothing and group by means group them if they have the same name
+summarise_all(mean) %>%
+data.frame() %>%
+column_to_rownames(var ='id') %>%
+t()
+
+##calculate mean for cortical thickness structures [age tertile 2]
+out_cort_thickness2<- t(cortical_thickness_subset2) %>%
+data.frame() %>%
+group_by(., id = gsub('^[rl]_', '', rownames(.))) %>% ##replace beginning that starts with r or l with nothing and group by means group them if they have the same name
+summarise_all(mean) %>%
+data.frame() %>%
+column_to_rownames(var ='id') %>%
+t()
+
+
+##calculate mean for cortical thickness structures [age tertile 3]
+out_cort_thickness3 <-t(cortical_thickness_subset3) %>%
+data.frame() %>%
+group_by(., id = gsub('^[rl]_', '', rownames(.))) %>% ##replace beginning that starts with r or l with nothing and group by means group them if they have the same name
+summarise_all(mean) %>%
+data.frame() %>%
+column_to_rownames(var ='id') %>%
+t()
+
+##standardise mean measures
+data.standardised_cortical_thickness1 <-as.data.frame(scale(out_cort_thickness1))
+names(data.standardised_cortical_thickness1) <- sapply(names(data.standardised_cortical_thickness1), function(x) {
+  y <- paste0(x, "_standardised_T1")
+}
+)
+
+##standardise mean measures
+data.standardised_cortical_thickness2 <-as.data.frame(scale(out_cort_thickness2))
+names(data.standardised_cortical_thickness2) <- sapply(names(data.standardised_cortical_thickness2), function(x) {
+  y <- paste0(x, "_standardised_T2")
+}
+)
+
+##standardise mean measures
+data.standardised_cortical_thickness3 <-as.data.frame(scale(out_cort_thickness3))
+names(data.standardised_cortical_thickness3) <- sapply(names(data.standardised_cortical_thickness3), function(x) {
+  y <- paste0(x, "_standardised_T3")
+}
+)
+
+#Bind factors such as sex, age at imaging, and PCS
+genetic_standardised_cortical_thickness1 <- cbind(cortical_thickness_completeT1[,c(1,8:160,162:173)],data.standardised_cortical_thickness1)
+genetic_standardised_cortical_thickness2 <- cbind(cortical_thickness_completeT2[,c(1,8:160,162:173)],data.standardised_cortical_thickness2)
+genetic_standardised_cortical_thickness3 <- cbind(cortical_thickness_completeT3[,c(1,8:160,162:173)],data.standardised_cortical_thickness3)
+
+##filter dataset to include complete data to be used in regression models
+genetic_cortical_thickness1 <- genetic_standardised_cortical_thickness1[!is.na(genetic_standardised_cortical_thickness1$sex) & !is.na(genetic_standardised_cortical_thickness1$age_imaging) & !is.na(genetic_standardised_cortical_thickness1$PC1)]
+descriptive_stats_cortical_thickness1 <- pairwiseCount(genetic_cortical_thickness1[,c(2:154)],genetic_cortical_thickness1[,c(167:200)])
+descriptive_stats_cortical_thickness1 <- t(descriptive_stats_cortical_thickness1)
+descriptive_stats_cortical_thickness_reshaped1<-setNames(melt(descriptive_stats_cortical_thickness1),c('Outcome','SNP','N'))
+write.table(descriptive_stats_cortical_thickness_reshaped1,"~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/UK_Biobank/GeneticData/Intelligence/Descriptive_statistics/descriptive_stats_cortical_thickness_ukbiobank_T1_intelligence_snps.csv",row.names=FALSE, quote=FALSE,sep=",")
+
+
+genetic_cortical_thickness2 <- genetic_standardised_cortical_thickness2[!is.na(genetic_standardised_cortical_thickness2$sex) & !is.na(genetic_standardised_cortical_thickness2$age_imaging) & !is.na(genetic_standardised_cortical_thickness2$PC1)]
+descriptive_stats_cortical_thickness2 <- pairwiseCount(genetic_cortical_thickness2[,c(2:154)],genetic_cortical_thickness2[,c(167:200)])
+descriptive_stats_cortical_thickness2 <- t(descriptive_stats_cortical_thickness2)
+descriptive_stats_cortical_thickness_reshaped2<-setNames(melt(descriptive_stats_cortical_thickness2),c('Outcome','SNP','N'))
+write.table(descriptive_stats_cortical_thickness_reshaped2,"~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/UK_Biobank/GeneticData/Intelligence/Descriptive_statistics/descriptive_stats_cortical_thickness_ukbiobank_T2_intelligence_snps.csv",row.names=FALSE, quote=FALSE,sep=",")
+
+
+#Perform a pairwise count to see how many people have each allele of interest and measure
+genetic_cortical_thickness3 <- genetic_standardised_cortical_thickness3[!is.na(genetic_standardised_cortical_thickness3$sex) & !is.na(genetic_standardised_cortical_thickness3$age_imaging) & !is.na(genetic_standardised_cortical_thickness3$PC1)]
+descriptive_stats_cortical_thickness3 <- pairwiseCount(genetic_cortical_thickness3[,c(2:154)],genetic_cortical_thickness3[,c(167:200)])
+descriptive_stats_cortical_thickness3 <- t(descriptive_stats_cortical_thickness3)
+descriptive_stats_cortical_thickness_reshaped3 <-setNames(melt(descriptive_stats_cortical_thickness3),c('Outcome','SNP','N'))
+write.table(descriptive_stats_cortical_thickness_reshaped3,"~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/UK_Biobank/GeneticData/Intelligence/Descriptive_statistics/descriptive_stats_cortical_thickness_ukbiobank_T3_intelligence_snps.csv",row.names=FALSE, quote=FALSE,sep=",")
+
+
+
+
+#############################################################################################################################################
+##RUN REGRESSION MODELS
+#############################################################################################################################################
+setwd("~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/UK_Biobank/GeneticData/Intelligence/GWAS")
+#############################################################################################################################################
+
+ivs_vec <- names(genetic_standardised_cortical_thickness1)[2:154]
+dvs_vec <- names(genetic_standardised_cortical_thickness1)[167:200]
+covs_vec <- paste("age_imaging","+","mean_thickness_standardised_T1","+","sex","+","PC1","+","PC2","+","PC3","+","PC4","+","PC5","+","PC6","+","PC7","+","PC8","+","PC9","+","PC10")
+
+ivs <- paste0(" ~ ", ivs_vec,"+",covs_vec)
+dvs_ivs <- unlist(lapply(ivs, function(x) paste0(dvs_vec, x))) ##given a list x, unlist simplifies to produce a vector
+formulas <- lapply(dvs_ivs, formula)
+
+lm_results <- lapply(formulas, function(x) {
+  lm(x, data=genetic_standardised_cortical_thickness1)
+})
+
+# Creating / combining results
+tidy_results <- lapply(lm_results, broom::tidy)
+dv_list <- as.list(stringi::stri_extract_first_words(dvs_ivs))
+tidy_results <- Map(cbind, dv_list, tidy_results)
+
+
+# subset results just for MR
+
+
+x <- lapply(tidy_results,"[",2,,drop=FALSE)
+rs_identifiers <- Map(cbind,dv_list,x)
+rs <- Map(as.data.frame,rs_identifiers)
+dfrData_rs <- rbindlist(rs,use.names=FALSE); 
+dfrData_rs$`dots[[1L]][[1L]]`<-NULL
+colnames(dfrData_rs) <- c("Outcome", "SNP", "BETA", "SE", "Statistic", "P")
+combined_results <- dfrData_rs
+sample_size <- read.csv("~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/UK_Biobank/GeneticData/Intelligence/Descriptive_statistics/descriptive_stats_cortical_thickness_ukbiobank_T1_intelligence_snps.csv")
+intelligence_alleles <- read.table("~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/Discovery_samples/SNPs/Intelligence/Proxies/intelligence_instruments_proxies020621_exposure_gwas_A1_A2.txt",he=TRUE)
+mr_dataset <- merge(combined_results,sample_size,by=c("SNP","Outcome"))
+mr_dataset$SNP <- sub("_[^_]+$", "",mr_dataset$SNP)
+mr_dataset <- merge(mr_dataset,intelligence_alleles,by="SNP")
+mr_dataset<- mr_dataset[order(mr_dataset$Outcome),]
+by(mr_dataset, mr_dataset$Outcome, FUN=function(i) write.table(i, paste0(i$Outcome[1],".txt"),quote = FALSE,row.names = FALSE))
+
+########################################################################################################################################################
+
+ivs_vec <- names(genetic_standardised_cortical_thickness2)[2:154]
+dvs_vec <- names(genetic_standardised_cortical_thickness2)[167:200]
+covs_vec <- paste("age_imaging","+","sex","+","mean_thickness_standardised_T2","+","PC1","+","PC2","+","PC3","+","PC4","+","PC5","+","PC6","+","PC7","+","PC8","+","PC9","+","PC10")
+ivs <- paste0(" ~ ", ivs_vec,"+",covs_vec)
+dvs_ivs <- unlist(lapply(ivs, function(x) paste0(dvs_vec, x))) ##given a list x, unlist simplifies to produce a vector
+formulas <- lapply(dvs_ivs, formula)
+
+lm_results <- lapply(formulas, function(x) {
+  lm(x, data=genetic_standardised_cortical_thickness2)
+})
+
+# Creating / combining results
+tidy_results <- lapply(lm_results, broom::tidy)
+dv_list <- as.list(stringi::stri_extract_first_words(dvs_ivs))
+tidy_results <- Map(cbind, dv_list, tidy_results)
+
+# subset results just for MR
+x <- lapply(tidy_results,"[",2,,drop=FALSE)
+rs_identifiers <- Map(cbind,dv_list,x)
+rs <- Map(as.data.frame,rs_identifiers)
+dfrData_rs <- rbindlist(rs,use.names=FALSE); 
+dfrData_rs$`dots[[1L]][[1L]]`<-NULL
+colnames(dfrData_rs) <- c("Outcome", "SNP", "BETA", "SE", "Statistic", "P")
+combined_results <- dfrData_rs
+sample_size <- read.csv("~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/UK_Biobank/GeneticData/Intelligence/Descriptive_statistics/descriptive_stats_cortical_thickness_ukbiobank_T2_intelligence_snps.csv")
+
+intelligence_alleles <- read.table("intelligence_instruments_proxies020621_exposure_gwas_A1_A2.txt",he=TRUE)
+mr_dataset <- merge(combined_results,sample_size,by=c("SNP","Outcome"))
+mr_dataset$SNP <- sub("_[^_]+$", "",mr_dataset$SNP)
+mr_dataset <- merge(mr_dataset,intelligence_alleles,by="SNP")
+mr_dataset<- mr_dataset[order(mr_dataset$Outcome),]
+by(mr_dataset, mr_dataset$Outcome, FUN=function(i) write.table(i, paste0(i$Outcome[1],".txt"),quote = FALSE,row.names = FALSE))
+
+####################################################################################################################################################
+
+ivs_vec <- names(genetic_standardised_cortical_thickness3)[2:154]
+dvs_vec <- names(genetic_standardised_cortical_thickness3)[167:200]
+covs_vec <- paste("age_imaging","+","sex","+","mean_thickness_standardised_T3","+","PC1","+","PC2","+","PC3","+","PC4","+","PC5","+","PC6","+","PC7","+","PC8","+","PC9","+","PC10")
+ivs <- paste0(" ~ ", ivs_vec,"+",covs_vec)
+dvs_ivs <- unlist(lapply(ivs, function(x) paste0(dvs_vec, x))) ##given a list x, unlist simplifies to produce a vector
+formulas <- lapply(dvs_ivs, formula)
+
+lm_results <- lapply(formulas, function(x) {
+  lm(x, data=genetic_standardised_cortical_thickness3)
+})
+
+# Creating / combining results
+tidy_results <- lapply(lm_results, broom::tidy)
+dv_list <- as.list(stringi::stri_extract_first_words(dvs_ivs))
+tidy_results <- Map(cbind, dv_list, tidy_results)
+
+# subset results just for MR
+x <- lapply(tidy_results,"[",2,,drop=FALSE)
+rs_identifiers <- Map(cbind,dv_list,x)
+rs <- Map(as.data.frame,rs_identifiers)
+dfrData_rs <- rbindlist(rs,use.names=FALSE); 
+dfrData_rs$`dots[[1L]][[1L]]`<-NULL
+colnames(dfrData_rs) <- c("Outcome", "SNP", "BETA", "SE", "Statistic", "P")
+combined_results <- dfrData_rs
+sample_size <- read.csv("~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/UK_Biobank/GeneticData/Intelligence/Descriptive_statistics/descriptive_stats_cortical_thickness_ukbiobank_T3_intelligence_snps.csv")
+
+
+intelligence_alleles <- read.table("~/MR_EDUCATION_IQ_BRAIN/prs_edu_iq_brain/Data/Discovery_samples/SNPs/Intelligence/Proxies/intelligence_instruments_proxies020621_exposure_gwas_A1_A2.txt",he=TRUE)
+mr_dataset <- merge(combined_results,sample_size,by=c("SNP","Outcome"))
+mr_dataset$SNP <- sub("_[^_]+$", "",mr_dataset$SNP)
+mr_dataset <- merge(mr_dataset,intelligence_alleles,by="SNP")
+mr_dataset<- mr_dataset[order(mr_dataset$Outcome),]
+by(mr_dataset, mr_dataset$Outcome, FUN=function(i) write.table(i, paste0(i$Outcome[1],".txt"),quote = FALSE,row.names = FALSE))
+
+
